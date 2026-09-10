@@ -1,0 +1,29 @@
+Senior Backend Engineer - Payments Platform
+
+About the role
+You will own core services in our payments platform: the ledger, the
+settlement engine, and the reconciliation pipeline. This is a hands-on
+senior IC role with significant design ownership.
+
+Requirements
+- 5+ years of backend engineering experience in production systems
+- Strong Go or Python; you will work in both
+- Deep experience with distributed systems: consistency models, idempotency,
+  exactly-once semantics, failure recovery
+- Production experience with event streaming (Kafka, Pulsar, or similar)
+- Strong relational database skills including schema design, indexing, and
+  query optimisation at scale
+- Experience operating services in production: on-call, incident response,
+  observability
+- Track record of designing systems that others build on
+
+Nice to have
+- Payments, ledger, or fintech domain experience
+- Kubernetes and infrastructure-as-code
+- Experience mentoring engineers
+
+What you will do
+- Design and build the next generation of our ledger service
+- Improve settlement latency and throughput
+- Partner with compliance on audit and reconciliation requirements
+- Mentor mid-level engineers on the team

@@ -1,0 +1,50 @@
+PRIYA RAMANATHAN
+Bengaluru, India | priya.ramanathan@example.com | +91 98765 43210
+linkedin.com/in/priyaramanathan | github.com/priyar
+
+SUMMARY
+Backend engineer with 6 years building payment and ledger systems at scale.
+Comfortable owning a service end to end, from schema design through on-call.
+
+EXPERIENCE
+
+Senior Software Engineer | Razorflow Payments | Bengaluru | Mar 2022 - Present
+- Owned the double-entry ledger service processing 40M transactions/month.
+- Cut p99 settlement latency from 1.8s to 240ms by replacing synchronous
+  fan-out with a Kafka-based outbox pattern.
+- Led the migration of 12 services from a shared Postgres instance to
+  per-service databases with zero downtime.
+- Mentored 3 engineers; two were promoted to SDE-2 during this period.
+- Tech: Python, Go, PostgreSQL, Kafka, Kubernetes, gRPC, Redis
+
+Software Engineer | Nimbus Retail Tech | Pune | Jul 2019 - Feb 2022
+- Built the inventory reconciliation pipeline used by 400+ retail partners.
+- Reduced nightly batch runtime from 6 hours to 45 minutes via incremental
+  checkpointing.
+- Added an idempotency layer that eliminated ~2,000 duplicate orders/month.
+- Tech: Python, Django, Celery, MySQL, RabbitMQ, AWS
+
+Software Engineering Intern | Nimbus Retail Tech | Pune | Jan 2019 - Jun 2019
+- Built internal admin tooling in Django.
+
+PROJECTS
+
+ledgerlite (github.com/priyar/ledgerlite)
+An embeddable double-entry accounting library in Go. 1.2k GitHub stars.
+Tech: Go, SQLite
+
+EDUCATION
+B.E. Computer Science | College of Engineering, Pune | 2019 | CGPA 8.7/10
+
+SKILLS
+Languages: Python, Go, SQL, JavaScript (basic)
+Infrastructure: Kubernetes, Docker, Terraform, AWS, Kafka
+Databases: PostgreSQL, MySQL, Redis, DynamoDB
+Practices: Distributed systems, event-driven architecture, on-call/SRE,
+           system design, code review
+
+CERTIFICATIONS
+AWS Certified Solutions Architect - Associate, Amazon Web Services, 2021
+
+LANGUAGES
+English (fluent), Tamil (native), Hindi (conversational)

@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SUITES = ["tests.test_offline", "tests.test_request_shape", "tests.test_pipeline_mock"]
+SUITES = ["tests.test_offline", "tests.test_request_shape", "tests.test_pipeline_mock", "tests.test_app"]
 
 failed: list[str] = []
 for suite in SUITES:

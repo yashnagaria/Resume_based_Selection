@@ -181,6 +181,7 @@ Concerns from stage 1 and unverified claims from stage 2 become
 | `pipeline.py` | Stage sequencing and mode branching | Format output |
 | `report.py` | Markdown rendering | Call the API |
 | `cli.py` | Argument parsing, file output, exit codes | Contain logic |
+| `app.py` | Streamlit UI: widgets, session state, rendering | Contain pipeline logic |
 
 The practical payoff: prompts can be tuned in `stages.py` without touching
 anything else, and the pipeline is usable as a library because all I/O and
@@ -222,6 +223,7 @@ no network, no cost — so the suite runs in CI.
 | `test_offline` | Schema conversion is strict and ref-free; ingestion of every format and every rejection path; report rendering across all modes and sparse data |
 | `test_request_shape` | The actual HTTP request: streaming on, `output_config` carrying both `effort` and `format`, no `$defs`, correct parsing, usage accounting, truncation detection |
 | `test_pipeline_mock` | All three pipeline modes end to end, prompt contents reaching the model, CLI exit codes and written files |
+| `test_app` | The Streamlit frontend, run for real via `AppTest` — initial render, empty-input warnings, and the full results view with all three tabs |
 
 Run with `python -m tests.run_all`.
 

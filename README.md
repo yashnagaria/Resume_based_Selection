@@ -51,7 +51,24 @@ export ANTHROPIC_API_KEY=sk-ant-...       # bash
 
 ---
 
-## Usage
+## Usage — web app
+
+```bash
+streamlit run app.py
+```
+
+Opens at `http://localhost:8501`. Upload a resume in the sidebar, type the role,
+press **Analyse resume**. Results appear in three tabs — Profile, Role fit,
+Interview kit — with the questions collapsible and filterable by category, and
+download buttons for the Markdown brief and the JSON.
+
+If `ANTHROPIC_API_KEY` is set the app picks it up automatically; otherwise
+there's a password field in the sidebar. Leave the role blank to get role
+recommendations instead of a verdict.
+
+---
+
+## Usage — CLI
 
 **Which roles does this candidate suit?**
 
@@ -131,6 +148,7 @@ Every stage returns a validated Pydantic model — see
 ## Project layout
 
 ```
+app.py          Streamlit frontend
 resume_pipeline/
   models.py     Pydantic schemas - the contract between stages
   llm.py        API wrapper: strict-schema calls, streaming, error handling
@@ -157,7 +175,7 @@ python -m tests.run_all
 
 Covers schema generation, resume ingestion for every supported format, the
 exact HTTP request shape, response parsing, all three pipeline modes, report
-rendering, and CLI file output.
+rendering, CLI file output, and the Streamlit frontend.
 
 ---
 

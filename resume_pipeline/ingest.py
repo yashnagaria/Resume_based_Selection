@@ -1,17 +1,18 @@
-"""Turn a resume file on disk into Messages API content blocks.
+"""Turn a resume file on disk into provider-neutral content parts.
 
-PDFs and images are handed to the API as native document/image blocks rather
-than run through a local text extractor - the model reads layout, columns and
-tables far better than a naive text dump does.
+PDFs and images are passed through as raw bytes rather than run through a local
+text extractor - the model reads layout, columns and tables far better than a
+naive text dump does. Each provider client converts these parts into its own
+wire format, so nothing here is Gemini- or Anthropic-specific.
 """
 
 from __future__ import annotations
 
-import base64
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import List, Union
 
-MAX_REQUEST_BYTES = 30 * 1024 * 1024  # API limit is 32 MB; leave headroom.
+MAX_REQUEST_BYTES = 18 * 1024 * 1024  # Inline request payloads must stay modest.
 
 IMAGE_MEDIA_TYPES = {
     ".png": "image/png",
@@ -21,6 +22,24 @@ IMAGE_MEDIA_TYPES = {
     ".webp": "image/webp",
 }
 TEXT_SUFFIXES = {".txt", ".md", ".rst", ".text"}
+
+
+@dataclass(frozen=True)
+class TextPart:
+    """A chunk of plain text."""
+
+    text: str
+
+
+@dataclass(frozen=True)
+class BinaryPart:
+    """A document or image, carried as raw bytes plus its MIME type."""
+
+    data: bytes
+    mime_type: str
+
+
+ContentPart = Union[TextPart, BinaryPart]
 
 
 class IngestError(ValueError):
@@ -48,8 +67,8 @@ def _docx_to_text(path: Path) -> str:
     return text
 
 
-def load_resume(path: str | Path) -> List[Dict[str, Any]]:
-    """Return the user-message content blocks representing this resume."""
+def load_resume(path: str | Path) -> List[ContentPart]:
+    """Return the provider-neutral content parts representing this resume."""
     path = Path(path)
     if not path.is_file():
         raise IngestError(f"Resume not found: {path}")
@@ -59,39 +78,19 @@ def load_resume(path: str | Path) -> List[Dict[str, Any]]:
         raise IngestError(f"{path.name} is empty.")
     if size > MAX_REQUEST_BYTES:
         raise IngestError(
-            f"{path.name} is {size / 1e6:.1f} MB, over the ~30 MB request limit."
+            f"{path.name} is {size / 1e6:.1f} MB, over the ~18 MB inline limit."
         )
 
     suffix = path.suffix.lower()
 
     if suffix == ".pdf":
-        data = base64.standard_b64encode(path.read_bytes()).decode("utf-8")
-        return [
-            {
-                "type": "document",
-                "source": {
-                    "type": "base64",
-                    "media_type": "application/pdf",
-                    "data": data,
-                },
-            }
-        ]
+        return [BinaryPart(data=path.read_bytes(), mime_type="application/pdf")]
 
     if suffix in IMAGE_MEDIA_TYPES:
-        data = base64.standard_b64encode(path.read_bytes()).decode("utf-8")
-        return [
-            {
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": IMAGE_MEDIA_TYPES[suffix],
-                    "data": data,
-                },
-            }
-        ]
+        return [BinaryPart(data=path.read_bytes(), mime_type=IMAGE_MEDIA_TYPES[suffix])]
 
     if suffix == ".docx":
-        return [{"type": "text", "text": _docx_to_text(path)}]
+        return [TextPart(text=_docx_to_text(path))]
 
     if suffix == ".doc":
         raise IngestError(
@@ -102,7 +101,7 @@ def load_resume(path: str | Path) -> List[Dict[str, Any]]:
         text = path.read_text(encoding="utf-8", errors="replace").strip()
         if not text:
             raise IngestError(f"No readable text found in {path.name}.")
-        return [{"type": "text", "text": text}]
+        return [TextPart(text=text)]
 
     raise IngestError(
         f"Unsupported resume format '{suffix}'. "

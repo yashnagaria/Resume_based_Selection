@@ -31,6 +31,7 @@ def check(name: str, condition: bool, detail: str = "") -> None:
 
 
 server, base_url = start_mock_server()
+os.environ["GEMINI_API_KEY"] = "AIza-mock"
 os.environ["ANTHROPIC_API_KEY"] = "sk-ant-mock"
 os.environ["ANTHROPIC_BASE_URL"] = base_url
 
@@ -66,12 +67,16 @@ at3 = fresh_app()
 # AppTest has no file_uploader widget API, so drive the pipeline the way the
 # app does and assert the rendering functions handle a real PipelineResult.
 import app as app_module  # noqa: E402
-from resume_pipeline.llm import ClaudeClient  # noqa: E402
+from resume_pipeline.llm import make_client  # noqa: E402
 from resume_pipeline.pipeline import run_pipeline  # noqa: E402
 from resume_pipeline.report import render_markdown  # noqa: E402
 
-client = ClaudeClient(api_key="sk-ant-mock")
-client.client = type(client.client)(api_key="sk-ant-mock", base_url=base_url, max_retries=0)
+from google import genai  # noqa: E402
+from google.genai import types as gtypes  # noqa: E402
+
+client = make_client(provider="gemini", api_key="AIza-mock")
+client.client = genai.Client(api_key="AIza-mock",
+                             http_options=gtypes.HttpOptions(base_url=base_url))
 result = run_pipeline(RESUME, client=client, target_role="Senior Backend Engineer",
                       num_questions=12)
 

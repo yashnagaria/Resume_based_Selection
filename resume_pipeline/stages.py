@@ -6,9 +6,10 @@ be tuned without touching orchestration.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import List, Sequence
 
-from .llm import ClaudeClient, dump_json
+from .ingest import ContentPart, TextPart
+from .llm import StructuredClient, dump_json
 from .models import (
     InterviewKit,
     ResumeProfile,
@@ -34,7 +35,7 @@ Ground rules that apply to everything you produce:
 """
 
 
-def extract_profile(client: ClaudeClient, resume_blocks: List[Dict[str, Any]]) -> ResumeProfile:
+def extract_profile(client: StructuredClient, resume_parts: Sequence[ContentPart]) -> ResumeProfile:
     """Stage 1: read the resume and normalise it into a structured profile."""
     system = f"""You are an expert technical recruiter and resume analyst.
 
@@ -59,8 +60,8 @@ Extraction guidance:
 - In extraction_notes, record anything illegible, ambiguous, or that you
   inferred rather than read directly."""
 
-    content = list(resume_blocks) + [
-        {"type": "text", "text": "Extract the structured profile from this resume."}
+    content = list(resume_parts) + [
+        TextPart(text="Extract the structured profile from this resume.")
     ]
     return client.structured(
         schema_model=ResumeProfile,
@@ -70,7 +71,7 @@ Extraction guidance:
     )
 
 
-def recommend_roles(client: ClaudeClient, profile: ResumeProfile) -> RoleRecommendations:
+def recommend_roles(client: StructuredClient, profile: ResumeProfile) -> RoleRecommendations:
     """Stage 2a: no target role given - propose the roles this candidate fits."""
     system = f"""You are a senior technical hiring manager advising on where a
 candidate should be placed.
@@ -106,7 +107,7 @@ Guidance:
 
 
 def assess_role_fit(
-    client: ClaudeClient,
+    client: StructuredClient,
     profile: ResumeProfile,
     target_role: str,
     job_description: str = "",
@@ -159,7 +160,7 @@ Guidance:
 
 
 def build_interview_kit(
-    client: ClaudeClient,
+    client: StructuredClient,
     profile: ResumeProfile,
     role: str,
     fit_context: str,

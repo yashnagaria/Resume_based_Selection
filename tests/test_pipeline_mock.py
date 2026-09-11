@@ -7,13 +7,14 @@ Run: python -m tests.test_pipeline_mock
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from resume_pipeline.cli import main as cli_main
-from resume_pipeline.llm import ClaudeClient
+from resume_pipeline.llm import make_client
 from resume_pipeline.pipeline import run_pipeline
 from resume_pipeline.report import render_markdown
 from tests.mock_server import MockHandler, start_mock_server
@@ -34,8 +35,20 @@ def check(name: str, condition: bool, detail: str = "") -> None:
 server, base_url = start_mock_server()
 
 
-def make_client() -> ClaudeClient:
-    client = ClaudeClient(api_key="sk-ant-mock")
+PROVIDER = os.environ.get("TEST_PROVIDER", "gemini")
+
+
+def build_client():
+    """A client for PROVIDER, pointed at the mock server."""
+    if PROVIDER == "gemini":
+        from google import genai
+        from google.genai import types
+        client = make_client(provider="gemini", api_key="AIza-mock")
+        client.client = genai.Client(
+            api_key="AIza-mock", http_options=types.HttpOptions(base_url=base_url)
+        )
+        return client
+    client = make_client(provider="anthropic", api_key="sk-ant-mock")
     client.client = type(client.client)(
         api_key="sk-ant-mock", base_url=base_url, max_retries=0
     )
@@ -44,7 +57,7 @@ def make_client() -> ClaudeClient:
 
 print("\nAssess mode (target role supplied)")
 steps: list[str] = []
-client = make_client()
+client = build_client()
 result = run_pipeline(
     RESUME, client=client, target_role="Senior Backend Engineer",
     jd_path=JD, num_questions=12, on_progress=steps.append,
@@ -61,15 +74,20 @@ sent = json.dumps(MockHandler.requests)
 check("job description reached the model", "Payments Platform" in sent)
 check("resume text reached the model", "Razorflow Payments" in sent)
 check("question count reached the prompt", "exactly 12 questions" in sent)
+def _system_of(req: dict) -> str:
+    """The system prompt, under whichever key this provider uses."""
+    return json.dumps(req.get("system") or req.get("systemInstruction") or "")
+
+
 check("fairness rules present in every call",
-      all("protected characteristic" in json.dumps(r["system"]) for r in MockHandler.requests))
+      all("protected characteristic" in _system_of(r) for r in MockHandler.requests))
 
 md = render_markdown(result)
 check("assess report has all sections",
       all(s in md for s in ("Candidate profile", "Role fit assessment", "Interview kit")))
 
 print("\nRecommend mode (no target role)")
-client2 = make_client()
+client2 = build_client()
 result2 = run_pipeline(RESUME, client=client2, num_questions=12)
 check("three model calls made", len(client2.usage) == 3, str(len(client2.usage)))
 check("mode is recommend", result2.mode == "recommend")
@@ -81,7 +99,7 @@ check("recommend report has all sections",
       all(s in md2 for s in ("Candidate profile", "Suitable roles", "Interview kit")))
 
 print("\nSkip-questions mode")
-client3 = make_client()
+client3 = build_client()
 result3 = run_pipeline(RESUME, client=client3, target_role="Senior Backend Engineer",
                        skip_questions=True)
 check("two model calls made", len(client3.usage) == 2, str(len(client3.usage)))
@@ -90,11 +108,22 @@ check("report still renders", "Role fit assessment" in render_markdown(result3))
 
 print("\nCLI (writes report + JSON)")
 out_dir = ROOT / "out" / "_clitest"
-import os
 os.environ["ANTHROPIC_API_KEY"] = "sk-ant-mock"
 os.environ["ANTHROPIC_BASE_URL"] = base_url
+os.environ["GEMINI_API_KEY"] = "AIza-mock"
 
-code = cli_main([str(RESUME), "--role", "Senior Backend Engineer",
+if PROVIDER == "gemini":
+    # google-genai exposes no base-URL env var, so redirect at the constructor.
+    from google import genai
+    from google.genai import types as _gtypes
+
+    _real_client = genai.Client
+    genai.Client = lambda **kw: _real_client(
+        **{**kw, "http_options": _gtypes.HttpOptions(base_url=base_url)}
+    )
+
+code = cli_main([str(RESUME), "--provider", PROVIDER,
+                 "--role", "Senior Backend Engineer",
                  "--jd", str(JD), "-n", "12", "--out", str(out_dir), "--quiet"])
 check("cli exits 0", code == 0, str(code))
 md_file = out_dir / "sample_resume.md"
@@ -107,10 +136,10 @@ if json_file.is_file():
           data["mode"] == "assess" and data["profile"]["full_name"] == "Priya Ramanathan"
           and data["assessment"]["fit_score"] == 88 and data["interview_kit"] is not None)
 
-bad = cli_main([str(RESUME), "-n", "0", "--out", str(out_dir), "--quiet"])
+bad = cli_main([str(RESUME), "--provider", PROVIDER, "-n", "0", "--out", str(out_dir), "--quiet"])
 check("cli rejects --questions 0", bad == 2, str(bad))
 
-missing = cli_main(["does_not_exist.pdf", "--out", str(out_dir), "--quiet"])
+missing = cli_main(["does_not_exist.pdf", "--provider", PROVIDER, "--out", str(out_dir), "--quiet"])
 check("cli reports a missing resume cleanly", missing == 1, str(missing))
 
 server.shutdown()

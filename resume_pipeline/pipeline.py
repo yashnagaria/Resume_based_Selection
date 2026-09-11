@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from .ingest import load_job_description, load_resume
-from .llm import ClaudeClient, dump_json
+from .llm import StructuredClient, dump_json
 from .models import PipelineResult
 from .stages import assess_role_fit, build_interview_kit, extract_profile, recommend_roles
 
@@ -18,7 +18,7 @@ def _noop(_message: str) -> None:
 def run_pipeline(
     resume_path: str | Path,
     *,
-    client: ClaudeClient,
+    client: StructuredClient,
     target_role: Optional[str] = None,
     jd_path: Optional[str | Path] = None,
     num_questions: int = 15,
@@ -33,11 +33,11 @@ def run_pipeline(
     resume_path = Path(resume_path)
 
     on_progress(f"Reading {resume_path.name}")
-    resume_blocks = load_resume(resume_path)
+    resume_parts = load_resume(resume_path)
     job_description = load_job_description(jd_path)
 
     on_progress("Stage 1/3  Extracting candidate profile")
-    profile = extract_profile(client, resume_blocks)
+    profile = extract_profile(client, resume_parts)
 
     result = PipelineResult(
         source_file=str(resume_path),

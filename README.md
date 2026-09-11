@@ -1,10 +1,11 @@
+<<<<<<< HEAD
 # Resume → Role Fit → Interview Kit
 
 A pipeline that reads a resume, extracts everything worth knowing from it,
 decides which role the candidate suits (or judges them against a role you
 name), and generates an interview tailored to that specific person and role.
 
-Built on the Anthropic Claude API.
+Runs on **Google Gemini** by default, with Anthropic Claude as an alternative provider.
 
 ---
 
@@ -40,14 +41,36 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-Set your API key ([get one here](https://console.anthropic.com/settings/keys)):
+### Where to put your Gemini API key
+
+Get one from [Google AI Studio](https://aistudio.google.com/apikey), then set
+`GEMINI_API_KEY` in your shell **before** launching:
 
 ```powershell
-$env:ANTHROPIC_API_KEY = "sk-ant-..."     # PowerShell
+$env:GEMINI_API_KEY = "AIza..."           # PowerShell (this session only)
 ```
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...       # bash
+export GEMINI_API_KEY=AIza...             # bash
 ```
+
+To persist it on Windows so you do not retype it each time:
+
+```powershell
+setx GEMINI_API_KEY "AIza..."             # then open a NEW terminal
+```
+
+Three other options, in order of preference:
+
+1. **Paste it into the web app** — if the env var is not set, the sidebar shows
+   a password field. Nothing is written to disk.
+2. **A `.env` file** in the project root (already gitignored):
+   `GEMINI_API_KEY=AIza...`
+3. `GOOGLE_API_KEY` also works — the SDK reads either.
+
+Never hardcode the key in a source file, and never commit it.
+
+For `--provider anthropic`, set `ANTHROPIC_API_KEY` instead
+([key page](https://console.anthropic.com/settings/keys)).
 
 ---
 
@@ -62,9 +85,10 @@ press **Analyse resume**. Results appear in three tabs — Profile, Role fit,
 Interview kit — with the questions collapsible and filterable by category, and
 download buttons for the Markdown brief and the JSON.
 
-If `ANTHROPIC_API_KEY` is set the app picks it up automatically; otherwise
-there's a password field in the sidebar. Leave the role blank to get role
-recommendations instead of a verdict.
+If `GEMINI_API_KEY` is set the app picks it up automatically; otherwise there's
+a password field in the sidebar. The Provider dropdown switches between Gemini
+and Anthropic. Leave the role blank to get role recommendations instead of a
+verdict.
 
 ---
 
@@ -103,8 +127,9 @@ model's idea of a generic role.
 | `--jd` | — | Job description file (`.txt`, `.md`, `.docx`). |
 | `--questions`, `-n` | `15` | How many interview questions to generate. |
 | `--out`, `-o` | `out` | Output directory. |
-| `--model` | `claude-opus-5` | Model id. |
-| `--effort` | `high` | `low` \| `medium` \| `high` \| `xhigh` \| `max`. |
+| `--provider`, `-p` | `gemini` | `gemini` or `anthropic`. |
+| `--model` | provider default | `gemini-3.8-flash` / `claude-opus-5`. |
+| `--effort` | `high` | `minimal` \| `low` \| `medium` \| `high` \| `xhigh` \| `max`. |
 | `--max-tokens` | `32000` | Per-call output cap. |
 | `--skip-questions` | off | Stop after the fit assessment. |
 | `--quiet`, `-q` | off | Suppress progress output. |
@@ -125,11 +150,11 @@ supported — save as `.docx` or `.pdf`.
 ## Using it as a library
 
 ```python
-from resume_pipeline.llm import ClaudeClient
+from resume_pipeline.llm import make_client
 from resume_pipeline.pipeline import run_pipeline
 from resume_pipeline.report import render_markdown
 
-client = ClaudeClient(effort="high")
+client = make_client(provider="gemini", effort="high")
 result = run_pipeline("resume.pdf", client=client, target_role="ML Engineer")
 
 print(result.assessment.verdict)          # "strong_fit"
@@ -151,8 +176,10 @@ Every stage returns a validated Pydantic model — see
 app.py          Streamlit frontend
 resume_pipeline/
   models.py     Pydantic schemas - the contract between stages
-  llm.py        API wrapper: strict-schema calls, streaming, error handling
-  ingest.py     Resume file -> API content blocks
+  llm.py        Provider-neutral base: schema conversion, client factory
+  llm_gemini.py     Gemini backend (google-genai)
+  llm_anthropic.py  Anthropic backend (anthropic)
+  ingest.py     Resume file -> provider-neutral content parts
   stages.py     The three prompts (extract / assess / question generation)
   pipeline.py   Orchestration
   report.py     Markdown renderer
@@ -197,3 +224,6 @@ in some jurisdictions (NYC Local Law 144 and the EU AI Act among others) — if
 you use this to filter candidates rather than to prepare for interviews, check
 your obligations first. Always have a human read the resume before rejecting
 anyone.
+=======
+# Resume_based_Selection
+>>>>>>> 781f188d5902158008fd5fd838baf7413cf60554

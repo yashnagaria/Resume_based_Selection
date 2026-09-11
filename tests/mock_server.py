@@ -1,8 +1,9 @@
-"""A local stand-in for the Anthropic Messages API.
+"""A local stand-in for both the Gemini and Anthropic APIs.
 
 It matches each incoming request to a canned response by the field set of the
-JSON schema in `output_config.format`, then replies with a well-formed SSE
-stream. Lets the whole pipeline be exercised with no API key and no network.
+response schema the request carries, then replies in that provider's wire
+format - JSON for Gemini, an SSE stream for Anthropic. Lets the whole pipeline
+be exercised with no API key and no network.
 """
 
 from __future__ import annotations
@@ -108,6 +109,33 @@ def _sse(payload_obj: Dict[str, Any]) -> bytes:
     return "".join(f"event: {n}\ndata: {json.dumps(p)}\n\n" for n, p in events).encode()
 
 
+def _gemini_json(payload_obj: Dict[str, Any]) -> bytes:
+    """The shape google-genai expects back from :generateContent."""
+    return json.dumps({
+        "candidates": [{
+            "content": {"role": "model",
+                        "parts": [{"text": json.dumps(payload_obj)}]},
+            "finishReason": "STOP",
+            "index": 0,
+        }],
+        "usageMetadata": {
+            "promptTokenCount": 100,
+            "candidatesTokenCount": 200,
+            "totalTokenCount": 300,
+        },
+        "modelVersion": "mock",
+    }).encode()
+
+
+def _required_fields(body: Dict[str, Any]) -> frozenset:
+    """Pull the response schema's field set out of either provider's request."""
+    if "output_config" in body:  # Anthropic
+        return frozenset(body["output_config"]["format"]["schema"]["required"])
+    config = body.get("generationConfig", body.get("generation_config", {}))
+    schema = config.get("responseSchema", config.get("response_schema", {}))
+    return frozenset(schema.get("required", []))
+
+
 class MockHandler(BaseHTTPRequestHandler):
     requests: List[Dict[str, Any]] = []
 
@@ -118,15 +146,18 @@ class MockHandler(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         MockHandler.requests.append(body)
 
-        required = frozenset(body["output_config"]["format"]["schema"]["required"])
+        required = _required_fields(body)
         payload_obj = next((resp for fields, resp in ROUTES if fields == required), None)
         if payload_obj is None:
             self.send_error(400, f"No canned response for fields: {sorted(required)}")
             return
 
-        payload = _sse(payload_obj)
+        is_gemini = "generateContent" in self.path
+        payload = _gemini_json(payload_obj) if is_gemini else _sse(payload_obj)
+        content_type = "application/json" if is_gemini else "text/event-stream"
+
         self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)

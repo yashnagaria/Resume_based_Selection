@@ -1,31 +1,58 @@
-"""Thin wrapper around the Anthropic Messages API for schema-constrained calls.
+"""Provider-neutral LLM layer.
 
 Every stage of the pipeline is one request that must come back as valid JSON
-matching a Pydantic model, so that logic lives here exactly once.
+matching a Pydantic model. That contract lives here; the per-provider wire
+details live in `llm_gemini.py` and `llm_anthropic.py`.
 """
 
 from __future__ import annotations
 
 import copy
 import json
+import os
+from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any, Dict, List, Sequence, Type, TypeVar
 
-import anthropic
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
-DEFAULT_MODEL = "claude-opus-5"
+from .ingest import ContentPart, TextPart
+
+
+def load_dotenv(path: str | Path = ".env") -> None:
+    """Load KEY=VALUE lines from a .env file into the environment.
+
+    Hand-rolled to avoid a dependency. Real environment variables always win,
+    so an exported key is never silently overridden by a stale file.
+    """
+    env_path = Path(path)
+    if not env_path.is_file():
+        return
+    for raw in env_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+load_dotenv()
+
+DEFAULT_PROVIDER = "gemini"
 DEFAULT_EFFORT = "high"
 DEFAULT_MAX_TOKENS = 32000
 
+DEFAULT_MODELS = {
+    "gemini": "gemini-3.8-flash",
+    "anthropic": "claude-opus-5",
+}
+
+EFFORT_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"]
+
 T = TypeVar("T", bound=BaseModel)
-
-
-AUTH_HELP = (
-    "No Anthropic credentials found.\n"
-    "  Set an API key:   PowerShell  $env:ANTHROPIC_API_KEY = 'sk-ant-...'\n"
-    "                    bash        export ANTHROPIC_API_KEY=sk-ant-...\n"
-    "  Get one at https://console.anthropic.com/settings/keys"
-)
 
 
 class LLMError(RuntimeError):
@@ -33,7 +60,7 @@ class LLMError(RuntimeError):
 
 
 # --------------------------------------------------------------------------
-# Pydantic JSON schema -> strict JSON schema the API will accept
+# Pydantic JSON schema -> strict JSON schema
 # --------------------------------------------------------------------------
 
 _DROP_KEYS = {"title", "default", "$defs", "definitions"}
@@ -67,7 +94,7 @@ def _resolve(node: Any, defs: Dict[str, Any]) -> Any:
     if out.get("type") == "object" and "properties" in out:
         out["additionalProperties"] = False
         # Strict mode wants every property listed as required; optionality is
-        # expressed by the field's own type (empty string / empty list / null).
+        # expressed by the field's own type (empty string / empty list).
         out["required"] = list(out["properties"].keys())
     return out
 
@@ -80,106 +107,75 @@ def to_strict_schema(model: Type[BaseModel]) -> Dict[str, Any]:
 
 
 # --------------------------------------------------------------------------
-# Client
+# Base client
 # --------------------------------------------------------------------------
 
-class ClaudeClient:
-    """Issues schema-constrained requests and validates the result."""
+class StructuredClient(ABC):
+    """A model client that returns validated Pydantic instances."""
 
-    def __init__(
-        self,
-        model: str = DEFAULT_MODEL,
-        effort: str = DEFAULT_EFFORT,
-        max_tokens: int = DEFAULT_MAX_TOKENS,
-        api_key: str | None = None,
-    ) -> None:
-        # No api_key argument means the SDK resolves ANTHROPIC_API_KEY,
-        # ANTHROPIC_AUTH_TOKEN, or an `ant auth login` profile in that order.
-        self.client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
+    def __init__(self, model: str, effort: str, max_tokens: int) -> None:
         self.model = model
         self.effort = effort
         self.max_tokens = max_tokens
-        self.usage: List[Dict[str, int]] = []
+        self.usage: List[Dict[str, Any]] = []
 
+    @abstractmethod
     def structured(
         self,
         *,
         schema_model: Type[T],
         system: str,
-        content: Sequence[Dict[str, Any]] | str,
+        content: Sequence[ContentPart] | str,
         label: str = "request",
     ) -> T:
-        """One request, one validated model instance.
+        """One request, one validated model instance."""
 
-        Streams so that a large `max_tokens` cannot trip the HTTP timeout.
-        """
-        user_content = [{"type": "text", "text": content}] if isinstance(content, str) else list(content)
+    @staticmethod
+    def _as_parts(content: Sequence[ContentPart] | str) -> List[ContentPart]:
+        return [TextPart(text=content)] if isinstance(content, str) else list(content)
 
-        try:
-            with self.client.messages.stream(
-                model=self.model,
-                max_tokens=self.max_tokens,
-                system=system,
-                messages=[{"role": "user", "content": user_content}],
-                output_config={
-                    "effort": self.effort,
-                    "format": {
-                        "type": "json_schema",
-                        "schema": to_strict_schema(schema_model),
-                    },
-                },
-            ) as stream:
-                response = stream.get_final_message()
-        except anthropic.AuthenticationError as exc:
-            raise LLMError(AUTH_HELP) from exc
-        except TypeError as exc:
-            # The SDK raises a bare TypeError when no credential source resolves.
-            if "authentication method" in str(exc):
-                raise LLMError(AUTH_HELP) from exc
-            raise
-        except anthropic.RateLimitError as exc:
-            raise LLMError(f"Rate limited during {label}: {exc.message}") from exc
-        except anthropic.APIStatusError as exc:
-            raise LLMError(f"API error during {label} ({exc.status_code}): {exc.message}") from exc
-        except anthropic.APIConnectionError as exc:
-            raise LLMError(f"Network error during {label}: {exc}") from exc
-
-        if response.usage is not None:
-            self.usage.append(
-                {
-                    "stage": label,
-                    "input_tokens": response.usage.input_tokens,
-                    "output_tokens": response.usage.output_tokens,
-                }
-            )
-
-        # `stop_details` is populated only on a refusal, so guard before reading.
-        if response.stop_reason == "refusal":
-            detail = getattr(response.stop_details, "explanation", "") or ""
-            raise LLMError(f"The model declined the {label} request. {detail}".strip())
-        if response.stop_reason == "max_tokens":
-            raise LLMError(
-                f"The {label} response hit the {self.max_tokens}-token cap and was truncated. "
-                "Raise --max-tokens or narrow the input."
-            )
-
-        text = next((b.text for b in response.content if b.type == "text"), "")
-        if not text.strip():
-            raise LLMError(f"Empty response for {label}.")
-
-        try:
-            return schema_model.model_validate_json(text)
-        except ValidationError as exc:
-            preview = text[:400]
-            raise LLMError(
-                f"Response for {label} did not match the expected schema.\n"
-                f"{exc}\nFirst 400 chars: {preview}"
-            ) from exc
+    def _record_usage(self, label: str, input_tokens: int, output_tokens: int) -> None:
+        self.usage.append(
+            {"stage": label, "input_tokens": input_tokens, "output_tokens": output_tokens}
+        )
 
     def usage_summary(self) -> str:
         total_in = sum(u["input_tokens"] for u in self.usage)
         total_out = sum(u["output_tokens"] for u in self.usage)
         return f"{total_in:,} input tokens, {total_out:,} output tokens across {len(self.usage)} calls"
+
+
+def make_client(
+    provider: str = DEFAULT_PROVIDER,
+    model: str | None = None,
+    effort: str = DEFAULT_EFFORT,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
+    api_key: str | None = None,
+) -> StructuredClient:
+    """Build the client for the named provider.
+
+    `model=None` picks that provider's default from DEFAULT_MODELS.
+    """
+    provider = provider.lower()
+    resolved = model or DEFAULT_MODELS.get(provider)
+    if resolved is None:
+        raise LLMError(
+            f"Unknown provider '{provider}'. Choose one of: {', '.join(DEFAULT_MODELS)}"
+        )
+
+    if provider == "gemini":
+        from .llm_gemini import GeminiClient
+
+        return GeminiClient(model=resolved, effort=effort, max_tokens=max_tokens, api_key=api_key)
+
+    if provider == "anthropic":
+        from .llm_anthropic import ClaudeClient
+
+        return ClaudeClient(model=resolved, effort=effort, max_tokens=max_tokens, api_key=api_key)
+
+    raise LLMError(
+        f"Unknown provider '{provider}'. Choose one of: {', '.join(DEFAULT_MODELS)}"
+    )
 
 
 def dump_json(model: BaseModel) -> str:

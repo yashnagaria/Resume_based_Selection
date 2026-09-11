@@ -13,12 +13,25 @@ from pathlib import Path
 import streamlit as st
 
 from resume_pipeline.ingest import IngestError
-from resume_pipeline.llm import DEFAULT_EFFORT, DEFAULT_MODEL, ClaudeClient, LLMError
+from resume_pipeline.llm import (
+    DEFAULT_EFFORT,
+    DEFAULT_MODELS,
+    DEFAULT_PROVIDER,
+    EFFORT_LEVELS,
+    LLMError,
+    make_client,
+)
 from resume_pipeline.models import PipelineResult
 from resume_pipeline.pipeline import run_pipeline
 from resume_pipeline.report import VERDICT_LABEL, render_markdown
 
 SUPPORTED = ["pdf", "docx", "txt", "md", "png", "jpg", "jpeg", "webp"]
+
+# Env vars each provider's SDK will pick a key up from, most specific first.
+KEY_ENV_VARS = {
+    "gemini": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+    "anthropic": ["ANTHROPIC_API_KEY"],
+}
 
 VERDICT_COLOR = {
     "strong_fit": "#1a7f37",
@@ -62,7 +75,7 @@ with st.sidebar:
     num_questions = st.slider("Interview questions", 5, 30, 15)
     effort = st.select_slider(
         "Reasoning effort",
-        options=["low", "medium", "high", "xhigh", "max"],
+        options=EFFORT_LEVELS,
         value=DEFAULT_EFFORT,
         help="Higher effort costs more and takes longer. 'high' suits most screening.",
     )
@@ -70,16 +83,23 @@ with st.sidebar:
         "Skip questions (fit assessment only)",
         help="Faster and cheaper - useful for bulk screening.",
     )
-    model = st.text_input("Model", value=DEFAULT_MODEL)
 
-    env_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    provider = st.selectbox(
+        "Provider",
+        options=sorted(DEFAULT_MODELS),
+        index=sorted(DEFAULT_MODELS).index(DEFAULT_PROVIDER),
+    )
+    model = st.text_input("Model", value=DEFAULT_MODELS[provider])
+
+    key_env = KEY_ENV_VARS[provider]
+    env_key = next((os.environ[v] for v in key_env if os.environ.get(v)), "")
     api_key = env_key or st.text_input(
-        "Anthropic API key",
+        f"{provider.title()} API key",
         type="password",
-        help="Not stored. Set ANTHROPIC_API_KEY in your environment to skip this.",
+        help=f"Not stored. Set {key_env[0]} in your environment to skip this.",
     )
     if env_key:
-        st.caption("Using ANTHROPIC_API_KEY from the environment.")
+        st.caption(f"Using {key_env[0]} from the environment.")
 
     run = st.button("Analyse resume", type="primary", width="stretch")
 
@@ -105,7 +125,9 @@ def analyse() -> None:
                 handle.write(jd_text)
                 jd_path = handle.name
 
-        client = ClaudeClient(model=model, effort=effort, api_key=api_key or None)
+        client = make_client(
+            provider=provider, model=model, effort=effort, api_key=api_key or None
+        )
 
         with st.status("Working...", expanded=True) as status:
             result = run_pipeline(
@@ -144,8 +166,8 @@ if run:
         st.warning("Upload a resume first.")
     elif not api_key:
         st.warning(
-            "An Anthropic API key is required. Enter it in the sidebar, or set "
-            "ANTHROPIC_API_KEY in your environment."
+            f"A {provider.title()} API key is required. Enter it in the sidebar, "
+            f"or set {KEY_ENV_VARS[provider][0]} in your environment."
         )
     else:
         analyse()

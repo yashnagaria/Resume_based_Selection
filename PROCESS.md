@@ -22,7 +22,8 @@ into an interview plan, while keeping the human in the decision.
 
 ## 2. Architecture
 
-Three sequential model calls, orchestrated in code:
+Three sequential model calls, orchestrated in code. The provider is swappable;
+nothing below the client boundary knows which one is in use:
 
 ```
         resume file (.pdf/.docx/.txt/image)
@@ -135,12 +136,41 @@ All requests use `client.messages.stream(...).get_final_message()`. With
 long stage-3 generation. Streaming removes that failure mode; the code still
 waits for the complete message, so nothing else changes.
 
-### Adaptive thinking, tunable effort
+### Provider-neutral by construction
 
-The model default (`claude-opus-5`) runs adaptive thinking, and `--effort`
-exposes the cost/quality dial. Resume screening and interview design are
-judgement tasks that repay reasoning, so the default is `high`. Bulk screening
-can drop to `low`; a final-round candidate can justify `xhigh`.
+The pipeline runs on Gemini by default and Anthropic on request, because only
+one thing differs between them: how a schema-constrained request is put on the
+wire. That lives behind `StructuredClient`, an abstract base with a single
+method (`structured`) that returns a validated Pydantic instance. `models.py`,
+`stages.py`, `pipeline.py` and `report.py` never learn which vendor answered.
+
+Two pieces make this work:
+
+- **`ingest.py` emits neutral parts.** `TextPart` and `BinaryPart` (raw bytes
+  plus a MIME type) carry the resume; each backend converts them at the edge -
+  Gemini to `types.Part.from_bytes`, Anthropic to base64 `document`/`image`
+  blocks. Without this, file handling would fork per provider.
+- **`make_client(provider, ...)` is the only construction point.** The CLI and
+  the Streamlit app both call it, so adding a third provider means adding one
+  module and one dictionary entry.
+
+The two backends do differ in how the schema is expressed. Gemini takes the
+Pydantic class directly as `response_schema` and validates for us
+(`response.parsed`); Anthropic needs the strict JSON Schema that
+`to_strict_schema()` produces. Both paths still end at
+`model_validate_json`, so a malformed response fails the same way on either.
+
+### Effort, and how it maps per provider
+
+`--effort` is the cost/quality dial. Resume screening and interview design are
+judgement tasks that repay reasoning, so the default is `high`; bulk screening
+can drop to `low`.
+
+The pipeline's scale is finer than Gemini's four thinking levels, so
+`llm_gemini.EFFORT_TO_THINKING_LEVEL` collapses the top three onto `HIGH`
+rather than silently dropping the setting. Anthropic passes `effort` through
+as-is. The mapping is a named constant precisely because it is lossy - it
+should be obvious and editable, not buried in a call.
 
 ### Fairness rules stated once
 
@@ -175,8 +205,10 @@ Concerns from stage 1 and unverified claims from stage 2 become
 | Module | Owns | Deliberately does not |
 |---|---|---|
 | `models.py` | The data contract between stages | Any prompt or API detail |
-| `llm.py` | Schema conversion, streaming, retries, error translation | Know what a resume is |
-| `ingest.py` | File → content blocks; format validation | Call the API |
+| `llm.py` | Schema conversion, the client factory, `.env` loading | Know any provider's wire format |
+| `llm_gemini.py` | The Gemini request/response shape | Orchestrate |
+| `llm_anthropic.py` | The Anthropic request/response shape | Orchestrate |
+| `ingest.py` | File → neutral content parts; format validation | Call the API |
 | `stages.py` | The three prompts and their schema bindings | Orchestrate or do I/O |
 | `pipeline.py` | Stage sequencing and mode branching | Format output |
 | `report.py` | Markdown rendering | Call the API |
@@ -193,12 +225,15 @@ argument handling sit in `cli.py`.
 
 Failures are converted into messages that tell the user what to do:
 
-- **No credentials** — the SDK raises a bare `TypeError` at request time.
-  `llm.py` catches it and prints the exact command to set a key.
+- **No credentials** — each backend checks at construction and prints the exact
+  command to set that provider's key. (Anthropic's SDK raises a bare
+  `TypeError` at request time, which `llm_anthropic.py` translates.)
 - **Truncation** — `stop_reason == "max_tokens"` raises rather than returning
   partial JSON, because silently truncated output is worse than an error.
-- **Refusal** — `stop_reason == "refusal"` is checked before reading content
-  (`stop_details` is only populated in that case, so it is guarded).
+- **Blocked output** — Gemini's `finish_reason` (`SAFETY`, `PROHIBITED_CONTENT`,
+  `RECITATION`, …) and Anthropic's `stop_reason == "refusal"` both become a
+  named error rather than an empty result. A response with no candidates at all
+  reports the prompt feedback.
 - **Schema mismatch** — a `ValidationError` reports the failing stage and the
   first 400 characters of the response.
 - **Bad input** — unreadable, empty, oversized, or unsupported files are
@@ -221,8 +256,8 @@ no network, no cost — so the suite runs in CI.
 | Suite | Verifies |
 |---|---|
 | `test_offline` | Schema conversion is strict and ref-free; ingestion of every format and every rejection path; report rendering across all modes and sparse data |
-| `test_request_shape` | The actual HTTP request: streaming on, `output_config` carrying both `effort` and `format`, no `$defs`, correct parsing, usage accounting, truncation detection |
-| `test_pipeline_mock` | All three pipeline modes end to end, prompt contents reaching the model, CLI exit codes and written files |
+| `test_request_shape` | The actual HTTP request for **both** providers: Gemini's `systemInstruction` / `responseSchema` / inline PDF part and Anthropic's streaming `output_config`, plus parsing, usage accounting and truncation detection on each |
+| `test_pipeline_mock` | All three pipeline modes end to end, prompt contents reaching the model, CLI exit codes and written files. Runs against Gemini by default; `TEST_PROVIDER=anthropic` runs the same suite through the other backend |
 | `test_app` | The Streamlit frontend, run for real via `AppTest` — initial render, empty-input warnings, and the full results view with all three tabs |
 
 Run with `python -m tests.run_all`.
@@ -237,8 +272,9 @@ model-generated text contained one.
 ## 7. Cost and latency
 
 Three calls per resume. The dominant cost is stage 3, which produces the most
-output. Rough shape at `claude-opus-5` ($5/$25 per MTok) for a two-page resume
-and 15 questions: single-digit cents per candidate, dominated by output tokens.
+output. For a two-page resume and 15 questions expect single-digit cents per
+candidate on a Flash-tier Gemini model, dominated by output tokens; an
+Opus-tier Anthropic model costs meaningfully more per candidate.
 
 Levers, cheapest first:
 

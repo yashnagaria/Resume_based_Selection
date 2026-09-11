@@ -8,7 +8,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from resume_pipeline.ingest import IngestError, load_job_description, load_resume
+from resume_pipeline.ingest import (
+    BinaryPart,
+    IngestError,
+    TextPart,
+    load_job_description,
+    load_resume,
+)
 from resume_pipeline.llm import to_strict_schema
 from resume_pipeline.models import (
     Certification,
@@ -75,26 +81,28 @@ for model in (ResumeProfile, RoleFitAssessment, RoleRecommendations, InterviewKi
 
 # ---------------------------------------------------------------- ingest
 print("\nIngest")
-txt_blocks = load_resume(SAMPLES / "sample_resume.txt")
-check("txt -> one text block", len(txt_blocks) == 1 and txt_blocks[0]["type"] == "text")
-check("txt content preserved", "Razorflow Payments" in txt_blocks[0]["text"])
+txt_parts = load_resume(SAMPLES / "sample_resume.txt")
+check("txt -> one TextPart", len(txt_parts) == 1 and isinstance(txt_parts[0], TextPart))
+check("txt content preserved", "Razorflow Payments" in txt_parts[0].text)
 
 tmp = ROOT / "out" / "_scratch"
 tmp.mkdir(parents=True, exist_ok=True)
 
 pdf = tmp / "fake.pdf"
 pdf.write_bytes(b"%PDF-1.4 minimal stub for ingest shape test")
-pdf_blocks = load_resume(pdf)
+pdf_parts = load_resume(pdf)
 check(
-    "pdf -> base64 document block",
-    pdf_blocks[0]["type"] == "document"
-    and pdf_blocks[0]["source"]["media_type"] == "application/pdf"
-    and isinstance(pdf_blocks[0]["source"]["data"], str),
+    "pdf -> BinaryPart with pdf mime type",
+    isinstance(pdf_parts[0], BinaryPart)
+    and pdf_parts[0].mime_type == "application/pdf"
+    and isinstance(pdf_parts[0].data, bytes),
 )
 
 png = tmp / "fake.png"
 png.write_bytes(b"\x89PNG\r\n\x1a\n stub")
-check("png -> image block", load_resume(png)[0]["type"] == "image")
+png_part = load_resume(png)[0]
+check("png -> BinaryPart with image mime type",
+      isinstance(png_part, BinaryPart) and png_part.mime_type == "image/png")
 
 
 def expect_error(name: str, fn) -> None:

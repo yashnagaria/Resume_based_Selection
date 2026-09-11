@@ -13,7 +13,15 @@ import sys
 from pathlib import Path
 
 from .ingest import IngestError
-from .llm import DEFAULT_EFFORT, DEFAULT_MAX_TOKENS, DEFAULT_MODEL, ClaudeClient, LLMError
+from .llm import (
+    DEFAULT_EFFORT,
+    DEFAULT_MAX_TOKENS,
+    DEFAULT_MODELS,
+    DEFAULT_PROVIDER,
+    EFFORT_LEVELS,
+    LLMError,
+    make_client,
+)
 from .models import PipelineResult
 from .pipeline import run_pipeline
 from .report import render_markdown
@@ -40,10 +48,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--out", "-o", default="out",
         help="Directory for the generated report and JSON (default: ./out).",
     )
-    parser.add_argument("--model", default=DEFAULT_MODEL, help=f"Model id (default: {DEFAULT_MODEL}).")
     parser.add_argument(
-        "--effort", default=DEFAULT_EFFORT,
-        choices=["low", "medium", "high", "xhigh", "max"],
+        "--provider", "-p", default=DEFAULT_PROVIDER, choices=sorted(DEFAULT_MODELS),
+        help=f"Model provider (default: {DEFAULT_PROVIDER}).",
+    )
+    parser.add_argument(
+        "--model", default=None,
+        help="Model id. Defaults to the provider's default: "
+             + ", ".join(f"{k}={v}" for k, v in sorted(DEFAULT_MODELS.items())) + ".",
+    )
+    parser.add_argument(
+        "--effort", default=DEFAULT_EFFORT, choices=EFFORT_LEVELS,
         help=f"Reasoning effort (default: {DEFAULT_EFFORT}).",
     )
     parser.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS, help="Per-call output cap.")
@@ -87,7 +102,16 @@ def main(argv: list[str] | None = None) -> int:
         if not args.quiet:
             print(f"  {message}", flush=True)
 
-    client = ClaudeClient(model=args.model, effort=args.effort, max_tokens=args.max_tokens)
+    try:
+        client = make_client(
+            provider=args.provider,
+            model=args.model,
+            effort=args.effort,
+            max_tokens=args.max_tokens,
+        )
+    except LLMError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
     try:
         result = run_pipeline(

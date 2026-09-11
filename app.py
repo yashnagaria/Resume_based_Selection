@@ -33,6 +33,30 @@ KEY_ENV_VARS = {
     "anthropic": ["ANTHROPIC_API_KEY"],
 }
 
+
+def resolve_api_key(names: list[str]) -> tuple[str, str]:
+    """Find an API key in Streamlit secrets or the environment.
+
+    Secrets come first so a deployed app uses the operator's configured key
+    rather than whatever happens to be in the container's environment.
+    Returns (key, human-readable source); ("", "") when nothing is configured.
+    """
+    for name in names:
+        try:
+            value = st.secrets.get(name, "")
+        except Exception:
+            # No secrets.toml and no configured secrets - normal when running
+            # locally; st.secrets raises rather than returning empty.
+            value = ""
+        if value:
+            return str(value), "Streamlit secrets"
+
+    for name in names:
+        if os.environ.get(name):
+            return os.environ[name], "the environment"
+
+    return "", ""
+
 VERDICT_COLOR = {
     "strong_fit": "#1a7f37",
     "good_fit": "#1a7f37",
@@ -92,14 +116,15 @@ with st.sidebar:
     model = st.text_input("Model", value=DEFAULT_MODELS[provider])
 
     key_env = KEY_ENV_VARS[provider]
-    env_key = next((os.environ[v] for v in key_env if os.environ.get(v)), "")
-    api_key = env_key or st.text_input(
+    found_key, key_source = resolve_api_key(key_env)
+    api_key = found_key or st.text_input(
         f"{provider.title()} API key",
         type="password",
-        help=f"Not stored. Set {key_env[0]} in your environment to skip this.",
+        help=f"Not stored. Set {key_env[0]} in Streamlit secrets or your "
+             "environment to skip this.",
     )
-    if env_key:
-        st.caption(f"Using {key_env[0]} from the environment.")
+    if found_key:
+        st.caption(f"Using {key_env[0]} from {key_source}.")
 
     run = st.button("Analyse resume", type="primary", width="stretch")
 
@@ -125,11 +150,11 @@ def analyse() -> None:
                 handle.write(jd_text)
                 jd_path = handle.name
 
-        client = make_client(
-            provider=provider, model=model, effort=effort, api_key=api_key or None
-        )
-
         with st.status("Working...", expanded=True) as status:
+            client = make_client(
+                provider=provider, model=model, effort=effort,
+                api_key=api_key or None, on_retry=status.write,
+            )
             result = run_pipeline(
                 tmp_path,
                 client=client,

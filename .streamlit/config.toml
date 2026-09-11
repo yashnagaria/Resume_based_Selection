@@ -1,0 +1,11 @@
+# Streamlit app configuration. Safe to commit - contains no secrets.
+
+[server]
+# Resumes are small; this also caps what a deployed app will accept.
+maxUploadSize = 20
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "light"

@@ -6,6 +6,7 @@ be tuned without touching orchestration.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import List, Sequence
 
 from .ingest import ContentPart, TextPart
@@ -37,6 +38,9 @@ Ground rules that apply to everything you produce:
 
 def extract_profile(client: StructuredClient, resume_parts: Sequence[ContentPart]) -> ResumeProfile:
     """Stage 1: read the resume and normalise it into a structured profile."""
+    # "Present" end dates are meaningless without an anchor date, and the model
+    # cannot reliably know today, so supply it.
+    today = date.today().isoformat()
     system = f"""You are an expert technical recruiter and resume analyst.
 
 Read the attached resume and extract a complete, faithful, structured profile.
@@ -48,9 +52,11 @@ Extraction guidance:
   and de-duplicate, but never add a skill the resume does not support.
 - Separate responsibilities ("what they were assigned") from achievements
   ("what measurably changed"). Only quantified outcomes belong in achievements.
+- Today's date is {today}. Resolve "Present" / "Current" end dates against it.
 - Compute total_experience_years from actual employment dates, handling
   overlapping roles without double counting. Exclude internships unless
-  internships are the candidate's only experience.
+  internships are the candidate's only experience. Show your arithmetic in
+  extraction_notes so a human can check it.
 - Infer seniority_level from scope, ownership and impact - not from job title
   alone, since titles inflate differently across companies.
 - In gaps_and_concerns, record concrete observations an interviewer should

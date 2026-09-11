@@ -46,7 +46,7 @@ DEFAULT_EFFORT = "high"
 DEFAULT_MAX_TOKENS = 32000
 
 DEFAULT_MODELS = {
-    "gemini": "gemini-3.8-flash",
+    "gemini": "gemini-3.7-flash",
     "anthropic": "claude-opus-5",
 }
 
@@ -151,6 +151,7 @@ def make_client(
     effort: str = DEFAULT_EFFORT,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     api_key: str | None = None,
+    on_retry=None,
 ) -> StructuredClient:
     """Build the client for the named provider.
 
@@ -166,7 +167,10 @@ def make_client(
     if provider == "gemini":
         from .llm_gemini import GeminiClient
 
-        return GeminiClient(model=resolved, effort=effort, max_tokens=max_tokens, api_key=api_key)
+        return GeminiClient(
+            model=resolved, effort=effort, max_tokens=max_tokens,
+            api_key=api_key, on_retry=on_retry,
+        )
 
     if provider == "anthropic":
         from .llm_anthropic import ClaudeClient

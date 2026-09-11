@@ -160,6 +160,15 @@ Pydantic class directly as `response_schema` and validates for us
 `to_strict_schema()` produces. Both paths still end at
 `model_validate_json`, so a malformed response fails the same way on either.
 
+### Supplying today's date
+
+Stage 1 is given the current date, because "Present" as an end date is
+uncomputable without it. Left to itself the model guessed, and understated a
+candidate's experience by two and a half years. The prompt also asks it to show
+its arithmetic in `extraction_notes`, which turns an unverifiable number into a
+checkable one - and in practice it now flags when its own calculation disagrees
+with the summary line the candidate wrote.
+
 ### Effort, and how it maps per provider
 
 `--effort` is the cost/quality dial. Resume screening and interview design are
@@ -238,8 +247,12 @@ Failures are converted into messages that tell the user what to do:
   first 400 characters of the response.
 - **Bad input** — unreadable, empty, oversized, or unsupported files are
   rejected in `ingest.py` before any tokens are spent.
-- **Rate limits and 5xx** — the SDK retries with backoff; what survives that
-  is reported with the stage name attached.
+- **Rate limits and 5xx** — Gemini returns `503 UNAVAILABLE` under load far
+  more often than a hosted API usually does, so `llm_gemini.py` retries with
+  exponential backoff and then walks down `FALLBACK_CHAIN` to a less loaded
+  model, reporting each switch through `on_retry` rather than appearing hung.
+  This was added after a real run failed five straight attempts on the default
+  model; the same run then completed by falling back one generation.
 
 Transport errors are caught per-type rather than as one broad class, so
 retryable failures stay distinguishable from permanent ones.

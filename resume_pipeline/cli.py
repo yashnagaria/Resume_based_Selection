@@ -108,6 +108,7 @@ def main(argv: list[str] | None = None) -> int:
             model=args.model,
             effort=args.effort,
             max_tokens=args.max_tokens,
+            on_retry=progress,
         )
     except LLMError as exc:
         print(f"error: {exc}", file=sys.stderr)

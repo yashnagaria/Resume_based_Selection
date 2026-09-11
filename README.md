@@ -90,6 +90,33 @@ a password field in the sidebar. The Provider dropdown switches between Gemini
 and Anthropic. Leave the role blank to get role recommendations instead of a
 verdict.
 
+### Deploying to Streamlit Community Cloud
+
+1. Push this repo to GitHub (already done if you cloned it from there).
+2. Go to [share.streamlit.io](https://share.streamlit.io) → **New app**, pick
+   the repo/branch, and set **Main file path** to `app.py`.
+3. Open **Advanced settings → Secrets** (or **Settings → Secrets** after
+   deploying) and paste:
+
+   ```toml
+   GEMINI_API_KEY = "AIza-your-key-here"
+   ```
+
+4. Deploy. `requirements.txt` and `.streamlit/config.toml` are picked up
+   automatically.
+
+The app reads the key from Streamlit secrets first, then the environment, then
+the sidebar field — so a deployed app uses the operator's configured key and
+never needs one typed in.
+
+**Running it locally with secrets instead of env vars:** copy
+`.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` and fill in your
+key. That file is gitignored.
+
+> **A deployed app spends your API quota on every visitor's upload.** Streamlit
+> Community Cloud apps are public by default. Either keep the app private, or
+> remove the key from secrets so each user supplies their own in the sidebar.
+
 ---
 
 ## Usage — CLI
@@ -128,7 +155,7 @@ model's idea of a generic role.
 | `--questions`, `-n` | `15` | How many interview questions to generate. |
 | `--out`, `-o` | `out` | Output directory. |
 | `--provider`, `-p` | `gemini` | `gemini` or `anthropic`. |
-| `--model` | provider default | `gemini-3.8-flash` / `claude-opus-5`. |
+| `--model` | provider default | `gemini-3.7-flash` / `claude-opus-5`. |
 | `--effort` | `high` | `minimal` \| `low` \| `medium` \| `high` \| `xhigh` \| `max`. |
 | `--max-tokens` | `32000` | Per-call output cap. |
 | `--skip-questions` | off | Stop after the fit assessment. |
@@ -203,6 +230,15 @@ python -m tests.run_all
 Covers schema generation, resume ingestion for every supported format, the
 exact HTTP request shape, response parsing, all three pipeline modes, report
 rendering, CLI file output, and the Streamlit frontend.
+
+### Model availability
+
+Gemini capacity fluctuates, and a busy model returns `503 UNAVAILABLE`. The
+Gemini backend retries with backoff and then walks down a fallback chain
+(`gemini-3.8-flash` → `3.7` → `3.6` → `3.5-flash`), reporting each switch, so a
+run completes rather than failing. Pin one model with `--model` if you need
+reproducibility; note that pinning still allows the tail of the chain as a last
+resort.
 
 ---
 

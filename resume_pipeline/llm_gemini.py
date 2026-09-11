@@ -7,6 +7,8 @@ into a Pydantic instance for us (`response.parsed`).
 from __future__ import annotations
 
 import os
+import random
+import time
 from typing import Sequence, Type, TypeVar
 
 from pydantic import BaseModel, ValidationError
@@ -39,17 +41,49 @@ BLOCKED_REASONS = {
 }
 
 
+# Gemini capacity fluctuates a lot, and a 503 on one model often clears
+# instantly on another. When the chosen model stays unavailable we walk down
+# this chain rather than failing the run.
+FALLBACK_CHAIN = [
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+]
+
+
+def _code_of(exc: Exception | None) -> str:
+    return str(getattr(exc, "code", "") or "error")
+
+
+def _fallbacks_for(model: str) -> list:
+    """Models to try after `model`, in order, skipping anything above it."""
+    if model in FALLBACK_CHAIN:
+        return FALLBACK_CHAIN[FALLBACK_CHAIN.index(model) + 1:]
+    # An unrecognised or pinned model gets the conservative tail of the chain.
+    return FALLBACK_CHAIN[-2:]
+
+
 class GeminiClient(StructuredClient):
     """Issues schema-constrained requests to Gemini and validates the result."""
 
     def __init__(
         self,
-        model: str = "gemini-3.8-flash",
+        model: str = "gemini-3.7-flash",
         effort: str = "high",
         max_tokens: int = 32000,
         api_key: str | None = None,
+        max_retries: int = 3,
+        on_retry=None,
+        allow_fallback: bool = True,
     ) -> None:
         super().__init__(model=model, effort=effort, max_tokens=max_tokens)
+        self.max_retries = max_retries
+        self.allow_fallback = allow_fallback
+        # Which model actually served the last call - may differ after fallback.
+        self.active_model = model
+        # Lets the CLI/app surface "busy, retrying" instead of appearing hung.
+        self.on_retry = on_retry or (lambda message: None)
 
         key = api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
         if not key:
@@ -104,23 +138,60 @@ class GeminiClient(StructuredClient):
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
 
-        try:
-            response = self.client.models.generate_content(
-                model=self.model,
-                contents=[types.Content(role="user", parts=parts)],
-                config=config,
+        # 503 (overloaded) and 429 (rate limit) are transient and common on
+        # popular models: retry with backoff, then fall back down the chain.
+        candidates = [self.model] + (
+            _fallbacks_for(self.model) if self.allow_fallback else []
+        )
+        last_transient: Exception | None = None
+        response = None
+
+        for model_name in candidates:
+            for attempt in range(self.max_retries + 1):
+                try:
+                    response = self.client.models.generate_content(
+                        model=model_name,
+                        contents=[types.Content(role="user", parts=parts)],
+                        config=config,
+                    )
+                    break
+                except errors.ClientError as exc:
+                    message = str(exc)
+                    code = getattr(exc, "code", None)
+                    if "API key" in message or "API_KEY" in message or code in (401, 403):
+                        raise LLMError(AUTH_HELP) from exc
+                    if code == 429:
+                        last_transient = exc
+                    else:
+                        raise LLMError(f"Request rejected during {label}: {message}") from exc
+                except errors.ServerError as exc:
+                    last_transient = exc
+                except errors.APIError as exc:
+                    raise LLMError(f"API error during {label}: {exc}") from exc
+
+                if attempt < self.max_retries:
+                    delay = min(1.5 * (2 ** attempt) + random.uniform(0, 1), 20.0)
+                    self.on_retry(
+                        f"{model_name} busy ({_code_of(last_transient)}); "
+                        f"retry {attempt + 1}/{self.max_retries} in {delay:.0f}s"
+                    )
+                    time.sleep(delay)
+
+            if response is not None:
+                if model_name != self.model:
+                    self.on_retry(f"Switched to {model_name} ({self.model} unavailable)")
+                    self.active_model = model_name
+                break
+            if model_name != candidates[-1]:
+                self.on_retry(f"{model_name} still unavailable; trying the next model")
+
+        if response is None:
+            tried = ", ".join(candidates)
+            raise LLMError(
+                f"No Gemini model was available for {label}. Tried: {tried}.\n"
+                f"Last error: {last_transient}\n"
+                "Gemini is under heavy load. Wait a few minutes and retry."
             )
-        except errors.ClientError as exc:
-            message = str(exc)
-            if "API key" in message or "API_KEY" in message or getattr(exc, "code", None) == 401:
-                raise LLMError(AUTH_HELP) from exc
-            if getattr(exc, "code", None) == 429:
-                raise LLMError(f"Rate limited during {label}: {message}") from exc
-            raise LLMError(f"Request rejected during {label}: {message}") from exc
-        except errors.ServerError as exc:
-            raise LLMError(f"Gemini server error during {label}: {exc}") from exc
-        except errors.APIError as exc:
-            raise LLMError(f"API error during {label}: {exc}") from exc
 
         usage = response.usage_metadata
         if usage is not None:
